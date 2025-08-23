@@ -1,0 +1,38 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: pe-textdomain\n"
+"Language: it_IT\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+msgid "Rotate Left"
+msgstr "Ruota a sinistra"
+
+msgid "Rotate Right"
+msgstr "Ruota a destra"
+
+msgid "Zoom Out"
+msgstr "Riduci"
+
+msgid "Zoom In"
+msgstr "Ingrandisci"
+
+msgid "Reset"
+msgstr "Ripristina"
+
+msgid "Apply Customization"
+msgstr "Applica personalizzazione"
+
+msgid "Upload image"
+msgstr "Carica immagine"
+
+msgid "Reset view"
+msgstr "Ripristina vista"
+
+msgid "Image preview canvas"
+msgstr "Canvas di anteprima immagine"
+
+msgid "Apply customization"
+msgstr "Applica personalizzazione"
+
