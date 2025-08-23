@@ -24,14 +24,79 @@
       btnZoomOut: document.getElementById('pe-zoom-out'),
       btnReset: document.getElementById('pe-reset'),
       btnClear: document.getElementById('pe-clear'),
-      hiddenData: document.getElementById('pe-data'),
+
+      // === Campi nascosti ===
+      // Fuori dal form (UI buffer, SENZA name)
+      hiddenDataUI: document.getElementById('pe-data-ui'),
+      // Dentro al form (verrà postato; name="image_customization")
+      hiddenDataForm: document.getElementById('pe-data'),
+
       statusMessage: document.getElementById('pe-status-message')
     };
 
-    if (!elements.canvas || !elements.hiddenData || !elements.fileInput || !elements.loadButton) {
+    // Non bloccare l'init se manca il campo dentro il form:
+    // possiamo comunque far funzionare l'editor e sincronizzare più tardi.
+    if (!elements.canvas || !elements.fileInput || !elements.loadButton) {
       console.error('Photo Editor: Required DOM elements not found');
       return;
     }
+
+    // Riferimento al form prodotto (per la sync prima del submit)
+    const productForm = document.querySelector('form.cart');
+
+    // Bridge di scrittura: aggiorna sempre entrambi i campi (UI + form)
+    function writeCustomizationJSON(json) {
+      if (elements.hiddenDataUI) elements.hiddenDataUI.value = json;
+      if (elements.hiddenDataForm) elements.hiddenDataForm.value = json;
+    }
+
+    // Aggancia la sync bidirezionale se i campi esistono
+    function wireHiddenSync() {
+      // Se il tema ha stampato il form dopo, riprova a cercare i campi
+      if (!elements.hiddenDataForm) {
+        elements.hiddenDataForm = document.getElementById('pe-data');
+      }
+      if (!elements.hiddenDataUI) {
+        elements.hiddenDataUI = document.getElementById('pe-data-ui');
+      }
+
+      // Se qualcuno scrive direttamente su #pe-data (vecchio codice), riflettiamo su UI
+      if (elements.hiddenDataForm) {
+        elements.hiddenDataForm.addEventListener('input', function() {
+          if (elements.hiddenDataUI && elements.hiddenDataUI.value !== elements.hiddenDataForm.value) {
+            elements.hiddenDataUI.value = elements.hiddenDataForm.value;
+          }
+        });
+      }
+      // Se qualcuno scrive su #pe-data-ui, riflettiamo su #pe-data
+      if (elements.hiddenDataUI) {
+        elements.hiddenDataUI.addEventListener('input', function() {
+          if (elements.hiddenDataForm && elements.hiddenDataForm.value !== elements.hiddenDataUI.value) {
+            elements.hiddenDataForm.value = elements.hiddenDataUI.value;
+          }
+        });
+      }
+
+      // Safety: prima del submit/click assicuriamo che il campo nel form abbia l'ultimo JSON
+      if (productForm) {
+        productForm.addEventListener('submit', function() {
+          if (elements.hiddenDataUI && elements.hiddenDataForm) {
+            elements.hiddenDataForm.value = elements.hiddenDataUI.value;
+          }
+        });
+        const addBtn = productForm.querySelector('.single_add_to_cart_button');
+        if (addBtn) {
+          addBtn.addEventListener('click', function() {
+            if (elements.hiddenDataUI && elements.hiddenDataForm) {
+              elements.hiddenDataForm.value = elements.hiddenDataUI.value;
+            }
+          });
+        }
+      }
+    }
+    // wire subito e anche al DOMContentLoaded (nel caso alcuni temi ritardino la stampa del form)
+    wireHiddenSync();
+    document.addEventListener('DOMContentLoaded', wireHiddenSync);
 
     const ctx = elements.canvas.getContext('2d');
 
@@ -69,9 +134,9 @@
 
     // ✅ Preload static border image
     const borderImg = new Image();
-    borderImg.src = peVars.borderImageUrl;
+    borderImg.src = (typeof peVars !== 'undefined' && peVars.borderImageUrl) ? peVars.borderImageUrl : '';
     borderImg.onload = () => {
-      console.log("Border image loaded:", borderImg.src);
+      // console.log("Border image loaded:", borderImg.src);
       draw();
     };
 
@@ -160,7 +225,7 @@
       }
 
       // ✅ Always draw border image last (overlay)
-      if (borderImg.complete) {
+      if (borderImg && borderImg.complete && borderImg.naturalWidth) {
         ctx.drawImage(borderImg, 0, 0, elements.canvas.width, elements.canvas.height);
       }
     }
@@ -196,7 +261,7 @@
         clearImage();
         return;
       }
-      if (!file.type.startsWith('image/')) {
+      if (!file.type || !file.type.startsWith('image/')) {
         ui.showStatus(STRINGS.invalidFile, 'error');
         return;
       }
@@ -239,15 +304,17 @@
       ui.updateControls();
 
       if (elements.fileInput) elements.fileInput.value = '';
-      if (elements.hiddenData) elements.hiddenData.value = '';
+      // svuota entrambi i campi
+      writeCustomizationJSON('');
 
       ui.showStatus(STRINGS.imageCleared, 'success');
     }
 
     // Save editor state
     function saveData() {
-      if (!state.imageLoaded || !state.img || !elements.hiddenData) {
-        if (elements.hiddenData) elements.hiddenData.value = '';
+      if (!state.imageLoaded || !state.img) {
+        // nessuna immagine → svuota entrambi i campi
+        writeCustomizationJSON('');
         return;
       }
 
@@ -272,7 +339,8 @@
         timestamp: Date.now()
       };
 
-      elements.hiddenData.value = JSON.stringify(data);
+      // Scrivi JSON in entrambi i campi (UI + form)
+      writeCustomizationJSON(JSON.stringify(data));
     }
 
     // === Controls ===
@@ -373,20 +441,20 @@
     // === Bind Events ===
     elements.loadButton.addEventListener('click', () => elements.fileInput.click());
     elements.fileInput.addEventListener('change', (e) => loadImage(e.target.files ? e.target.files[0] : null));
-    elements.btnRotateLeft.addEventListener('click', rotateLeft);
-    elements.btnRotateRight.addEventListener('click', rotateRight);
-    elements.btnZoomIn.addEventListener('click', zoomIn);
-    elements.btnZoomOut.addEventListener('click', zoomOut);
-    elements.btnReset.addEventListener('click', resetView);
-    elements.btnClear.addEventListener('click', clearImage);
+    if (elements.btnRotateLeft) elements.btnRotateLeft.addEventListener('click', rotateLeft);
+    if (elements.btnRotateRight) elements.btnRotateRight.addEventListener('click', rotateRight);
+    if (elements.btnZoomIn) elements.btnZoomIn.addEventListener('click', zoomIn);
+    if (elements.btnZoomOut) elements.btnZoomOut.addEventListener('click', zoomOut);
+    if (elements.btnReset) elements.btnReset.addEventListener('click', resetView);
+    if (elements.btnClear) elements.btnClear.addEventListener('click', clearImage);
 
     elements.canvas.addEventListener('mousedown', onMouseDown);
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     elements.canvas.addEventListener('wheel', onWheel, { passive: false });
 
-    elements.canvas.addEventListener('touchstart', onTouchStart);
-    elements.canvas.addEventListener('touchmove', onTouchMove);
+    elements.canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+    elements.canvas.addEventListener('touchmove', onTouchMove, { passive: false });
     elements.canvas.addEventListener('touchend', onTouchEnd);
 
     // Init
@@ -394,6 +462,34 @@
     ui.showBody();
     ui.showLoadButton();
     ui.updateControls();
+
+    // API opzionale, nel caso tu voglia richiamarla da altri script
+    window.PE_writeCustomization = function(payload) {
+      const json = (typeof payload === 'string') ? payload : JSON.stringify(payload || {});
+      writeCustomizationJSON(json);
+    };
+    window.PE_buildAndWriteFromCanvas = function() {
+      if (!state.imageLoaded) { writeCustomizationJSON(''); return; }
+      try {
+        const dataUrl = elements.canvas.toDataURL('image/png');
+        const payload = {
+          rotation: state.rotation,
+          zoom: state.scale,
+          positionX: state.posX,
+          positionY: state.posY,
+          canvasWidth: elements.canvas.width,
+          canvasHeight: elements.canvas.height,
+          imageWidth: state.imgNaturalWidth,
+          imageHeight: state.imgNaturalHeight,
+          hasImage: state.imageLoaded,
+          finalImage: dataUrl,
+          timestamp: Date.now()
+        };
+        writeCustomizationJSON(JSON.stringify(payload));
+      } catch (e) {
+        // ignore
+      }
+    };
   }
 
 })();

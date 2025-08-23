@@ -29,6 +29,8 @@ function setup()
   // 4) Remove default Woo gallery and insert our editor on single product pages
   remove_action('woocommerce_before_single_product_summary', 'woocommerce_show_product_images', 20);
   add_action('woocommerce_before_single_product_summary', __NAMESPACE__ . '\\render_editor', 5);
+  add_action('woocommerce_before_add_to_cart_button', __NAMESPACE__ . '\\output_form_field', 1);
+
 
   // 5) Cart / order meta plumbing
   add_filter('woocommerce_add_cart_item_data', __NAMESPACE__ . '\\capture_cart_item_data', 10, 3);
@@ -80,6 +82,13 @@ function debug_i18n()
   // Test a string
   error_log('Test Translation: ' . __('Rotate Left', 'pe-textdomain'));
 }
+
+function output_form_field()
+{
+  // Hidden input INSIDE the form that is actually posted
+  echo '<input type="hidden" name="image_customization" id="pe-data">';
+}
+
 
 /** =========================
  *  4) Editor Markup (before summary)
@@ -159,7 +168,7 @@ function render_editor()
 
     <!-- Hidden file input -->
     <input type="file" id="pe-file" accept="image/*" />
-    <input type="hidden" name="image_customization" id="pe-data">
+    <input type="hidden" id="pe-data-ui">
 
     <!-- Status message area -->
     <div id="pe-status-message" class="pe-status-message"></div>
