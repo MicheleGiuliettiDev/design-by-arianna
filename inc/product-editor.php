@@ -83,22 +83,13 @@ function output_form_field()
  * ========================================================================= */
 function render_editor()
 {
-  // Rileva user agent semplice per mobile (puoi migliorare con librerie più robuste)
-  $is_mobile = wp_is_mobile(); // Funzione WordPress che individua dispositivi mobili
-
-  // Set dimensioni canvas in base al device
-  $canvas_size = $is_mobile ? 375 : 900;
-  ?>
+?>
   <div id="pe-editor">
     <div id="pe-body">
-      <img id="pe-border-img"
-        src="<?php echo esc_url(get_stylesheet_directory_uri() . '/images/input-border-800.png'); ?>"
-        alt="Border Frame"
-        class="pe-border-frame"
-        onerror="this.style.display='none'; document.getElementById('pe-border-fallback').style.display='block';" />
-
-      <canvas id="pe-canvas" width="<?php echo $canvas_size; ?>" height="<?php echo $canvas_size; ?>" class="pe-empty-canvas"
-        aria-label="<?php echo esc_attr__('Image preview canvas', 'pe-textdomain'); ?>" role="img"></canvas>
+      <canvas id="pe-canvas"
+        class="pe-empty-canvas"
+        aria-label="<?php echo esc_attr__('Image preview canvas', 'pe-textdomain'); ?>"
+        role="img"></canvas>
 
       <button id="pe-load-border" type="button">📷 <?php echo esc_html__('Add Image', 'pe-textdomain'); ?></button>
     </div>
@@ -466,11 +457,12 @@ function enqueue_editor_js()
     'borderImageUrl' => get_stylesheet_directory_uri() . '/images/input-border.png',
     'ajaxUrl'        => admin_url('admin-ajax.php'),
     'nonce'          => wp_create_nonce('pe_nonce'),
+    'exportSize'     => 2400, // target longest side (px) for high-res export
     'strings'        => [
-      'imageLoaded' => __('Image loaded successfully!', 'pe-textdomain'),
+      'imageLoaded'  => __('Image loaded successfully!', 'pe-textdomain'),
       'imageCleared' => __('Image cleared.', 'pe-textdomain'),
-      'invalidFile' => __('Please select a valid image file.', 'pe-textdomain'),
-      'loadError'   => __('Error loading image. Please try another file.', 'pe-textdomain'),
+      'invalidFile'  => __('Please select a valid image file.', 'pe-textdomain'),
+      'loadError'    => __('Error loading image. Please try another file.', 'pe-textdomain'),
     ],
   ]);
 }

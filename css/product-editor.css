@@ -2,43 +2,37 @@
 #pe-editor {
   margin: 1.5rem auto;
   position: relative;
-  max-width: 800px;
+  max-width: 900px;
+  /* a touch wider gives more room on desktop */
   width: 100%;
   background: #fff;
-  padding: 1.5rem;
+  padding: clamp(12px, 2vw, 24px);
+  /* responsive padding */
   border-radius: 12px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   transition: box-shadow 0.3s ease;
 }
+
 #pe-editor:hover {
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
 }
 
-/* === Canvas Body === */
+/* === Canvas Body (keeps a square but scales with width) === */
 #pe-body {
   margin: 0 auto;
   position: relative;
-  max-width: 800px;
+  /* ✅ keep this */
+  width: 100%;
+  max-width: 900px;
   aspect-ratio: 1 / 1;
   border-radius: 10px;
   overflow: hidden;
   background: #fafafa;
+  display: grid;
+  place-items: center;
 }
 
-/* === Border Frame & Fallback === */
-.pe-border-frame,
-.pe-border-fallback {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 10;
-  border-radius: 10px;
-}
-.pe-border-fallback {
-  border: 6px solid transparent;
-  border-image: linear-gradient(45deg, #007cba, #005a87, #007cba) 1;
-  display: none;
-}
+/* Removed .pe-border-frame / fallback image: border is drawn on canvas */
 
 /* === Canvas === */
 #pe-canvas {
@@ -52,9 +46,17 @@
   box-shadow: inset 0 0 6px rgba(0, 0, 0, 0.06);
   cursor: default;
   transition: background 0.2s ease, box-shadow 0.2s ease;
+  z-index: 1;
 }
-#pe-canvas.pe-canvas-draggable { cursor: grab; }
-#pe-canvas.pe-canvas-dragging { cursor: grabbing; }
+
+#pe-canvas.pe-canvas-draggable {
+  cursor: grab;
+}
+
+#pe-canvas.pe-canvas-dragging {
+  cursor: grabbing;
+}
+
 #pe-canvas.pe-empty-canvas {
   background-color: #f8f9fa;
   background-image:
@@ -63,12 +65,13 @@
   background-size: 20px 20px;
 }
 
-/* === Centered Add Image Button === */
+/* === Centered Add Image Button (floats over empty canvas) === */
 #pe-load-border {
   position: absolute;
-  top: 50%; left: 50%;
+  top: 50%;
+  left: 50%;
   transform: translate(-50%, -50%);
-  z-index: 5;
+  z-index: 3;
   padding: 0.75rem 1.25rem;
   cursor: pointer;
   background: #007cba;
@@ -77,43 +80,60 @@
   border-radius: 6px;
   font-size: 0.95rem;
   font-weight: 500;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-  transition: all 0.25s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: transform 0.25s ease, background 0.25s ease;
 }
+
 #pe-load-border:hover {
   background: #005a87;
-  transform: translate(-50%, -50%) scale(1.05);
 }
+
 #pe-load-border:focus {
   outline: 3px solid #80d0ff;
   outline-offset: 2px;
 }
 
-/* === Controls Toolbar === */
+/* === Controls Toolbar (wraps on small screens) === */
 #pe-controls {
   margin-top: 1.25rem;
-  text-align: center;
   display: flex;
   justify-content: center;
   gap: 0.5rem;
   flex-wrap: wrap;
 }
+
 .pe-btn {
   padding: 0.5rem 0.9rem;
   border: 1px solid #ddd;
   background: #f9f9f9;
   cursor: pointer;
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: clamp(0.85rem, 1.8vw, 0.95rem);
   transition: all 0.2s ease;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  min-width: clamp(110px, 22vw, 160px);
 }
-.pe-btn i { font-size: 0.9rem; }
-.pe-btn:hover { background: #efefef; border-color: #ccc; }
-.pe-btn:active { background: #e2e2e2; }
-.pe-btn:focus { outline: 2px solid #007cba; outline-offset: 2px; }
+
+.pe-btn i {
+  font-size: 0.9rem;
+}
+
+.pe-btn:hover {
+  background: #efefef;
+  border-color: #ccc;
+}
+
+.pe-btn:active {
+  background: #e2e2e2;
+}
+
+.pe-btn:focus {
+  outline: 2px solid #007cba;
+  outline-offset: 2px;
+}
+
 .pe-btn:disabled {
   opacity: .55;
   cursor: not-allowed;
@@ -122,7 +142,9 @@
 }
 
 /* === File Input (hidden) === */
-#pe-file { display: none; }
+#pe-file {
+  display: none;
+}
 
 /* === Status Messages === */
 .pe-status-message {
@@ -130,17 +152,27 @@
   margin-top: .8rem;
   padding: .6rem 1rem;
   border-radius: 6px;
-  font-size: .9rem;
+  font-size: clamp(.85rem, 1.6vw, .9rem);
   display: none;
   transition: opacity .25s ease, transform .25s ease;
 }
+
 .pe-status-success {
   background: #e6f7ed;
   color: #17633d;
   border: 1px solid #b2e0c8;
 }
+
 .pe-status-error {
   background: #fdeaea;
   color: #a12d2d;
   border: 1px solid #f3b5b5;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
