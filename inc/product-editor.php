@@ -82,18 +82,22 @@ function output_form_field()
  * Editor markup (outside the form)
  * ========================================================================= */
 function render_editor()
-{ ?>
+{
+  // Rileva user agent semplice per mobile (puoi migliorare con librerie più robuste)
+  $is_mobile = wp_is_mobile(); // Funzione WordPress che individua dispositivi mobili
+
+  // Set dimensioni canvas in base al device
+  $canvas_size = $is_mobile ? 375 : 900;
+  ?>
   <div id="pe-editor">
     <div id="pe-body">
       <img id="pe-border-img"
-        src="<?php echo esc_url(get_stylesheet_directory_uri() . '/images/input-border.png'); ?>"
+        src="<?php echo esc_url(get_stylesheet_directory_uri() . '/images/input-border-800.png'); ?>"
         alt="Border Frame"
         class="pe-border-frame"
         onerror="this.style.display='none'; document.getElementById('pe-border-fallback').style.display='block';" />
 
-      <div id="pe-border-fallback" class="pe-border-fallback"></div>
-
-      <canvas id="pe-canvas" width="400" height="400" class="pe-empty-canvas"
+      <canvas id="pe-canvas" width="<?php echo $canvas_size; ?>" height="<?php echo $canvas_size; ?>" class="pe-empty-canvas"
         aria-label="<?php echo esc_attr__('Image preview canvas', 'pe-textdomain'); ?>" role="img"></canvas>
 
       <button id="pe-load-border" type="button">📷 <?php echo esc_html__('Add Image', 'pe-textdomain'); ?></button>
@@ -113,7 +117,8 @@ function render_editor()
     <input type="hidden" id="pe-data-ui">
     <div id="pe-status-message" class="pe-status-message"></div>
   </div>
-<?php }
+<?php
+}
 
 /** =========================================================================
  * Cart / Order meta
