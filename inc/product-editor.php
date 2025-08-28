@@ -9,7 +9,6 @@ defined('ABSPATH') || exit;
  * ========================================================================= */
 function setup()
 {
-
   // i18n & assets
   add_action('after_setup_theme', __NAMESPACE__ . '\\load_textdomain');
   add_action('wp_head',           __NAMESPACE__ . '\\enqueue_fontawesome');
@@ -83,12 +82,12 @@ function output_form_field()
  * ========================================================================= */
 function render_editor()
 {
-  // Rileva user agent semplice per mobile (puoi migliorare con librerie più robuste)
-  $is_mobile = wp_is_mobile(); // Funzione WordPress che individua dispositivi mobili
+  // Rileva user agent semplice per mobile
+  $is_mobile = wp_is_mobile();
 
   // Set dimensioni canvas in base al device
   $canvas_size = $is_mobile ? 375 : 900;
-  ?>
+?>
   <div id="pe-editor">
     <div id="pe-body">
       <img id="pe-border-img"
@@ -141,9 +140,12 @@ function save_order_item_meta($item, $cart_item_key, $values, $order)
 
   $data = $values['image_customization'];
 
+  // Prefer hi-res (finalImageFull), fallback to legacy finalImage
+  $src = $data['finalImageFull'] ?? ($data['finalImage'] ?? '');
+
   // If we have a base64 image, save it to the Media Library and store its URL.
-  if (!empty($data['finalImage']) && preg_match('/^data:image\/(\w+);base64,/', $data['finalImage'], $type)) {
-    $blob = substr($data['finalImage'], strpos($data['finalImage'], ',') + 1);
+  if (!empty($src) && preg_match('/^data:image\/(\w+);base64,/', $src, $type)) {
+    $blob = substr($src, strpos($src, ',') + 1);
     $ext  = strtolower($type[1]); // png/jpg/gif/webp...
     $bin  = base64_decode($blob);
     $file = 'custom_' . time() . '.' . $ext;
@@ -203,6 +205,48 @@ function pe_clickable_thumb_html($src, $alt = '', $max_w = 80)
     '</a>';
 }
 
+/**
+ * NEW helpers:
+ * - pe_get_custom_image_href: best link target (prefer uploaded URL → hi-res data → others)
+ * - pe_get_custom_image_thumb_src: best thumbnail source (prefer tiny thumb)
+ * - pe_clickable_thumb_pair: <a href=HIRES><img src=THUMB/></a>
+ */
+function pe_get_custom_image_href($item)
+{
+  $json = $item->get_meta('_image_customization');
+  if (!$json) return '';
+  $data = json_decode($json, true);
+  if (!is_array($data)) return '';
+  if (!empty($data['finalImageURL']))  return esc_url($data['finalImageURL']);
+  if (!empty($data['finalImageFull'])) return $data['finalImageFull'];
+  if (!empty($data['finalImage']))     return $data['finalImage'];
+  if (!empty($data['finalImageThumb'])) return $data['finalImageThumb'];
+  return '';
+}
+function pe_get_custom_image_thumb_src($item)
+{
+  $json = $item->get_meta('_image_customization');
+  if (!$json) return '';
+  $data = json_decode($json, true);
+  if (!is_array($data)) return '';
+  if (!empty($data['finalImageThumb'])) return $data['finalImageThumb'];
+  if (!empty($data['finalImage']))      return $data['finalImage'];
+  if (!empty($data['finalImageFull']))  return $data['finalImageFull'];
+  if (!empty($data['finalImageURL']))   return esc_url($data['finalImageURL']);
+  return '';
+}
+function pe_clickable_thumb_pair($img_src, $href, $alt = '', $max_w = 80)
+{
+  $img_safe  = pe_safe_img_src($img_src);
+  $href_safe = pe_safe_img_src($href);
+  $dl        = pe_guess_filename_from_src($href_safe ?: $img_safe);
+  $classes   = 'attachment-woocommerce_thumbnail size-woocommerce_thumbnail';
+  $alt       = esc_attr($alt);
+  return '<a href="' . $href_safe . '" class="pe-thumb-link" target="_blank" rel="noopener noreferrer nofollow" download="' . esc_attr($dl) . '">' .
+    '<img src="' . $img_safe . '" class="' . esc_attr($classes) . '" alt="' . $alt . '" style="max-width:' . intval($max_w) . 'px;height:auto;border:1px solid #ddd;" />' .
+    '</a>';
+}
+
 /** =========================================================================
  * Admin order screen preview (clickable)
  * ========================================================================= */
@@ -211,18 +255,21 @@ function show_admin_order_item_preview($product, $item, $item_id)
   $json = $item->get_meta('_image_customization');
   if (!$json) return;
   $data = json_decode($json, true);
-  if (!is_array($data) || empty($data['finalImage'])) return;
+  if (!is_array($data)) return;
 
-  $src  = $data['finalImageURL'] ?? $data['finalImage'];
-  $html = pe_clickable_thumb_html($src, __('Customized Image', 'pe-textdomain'), 160);
+  $thumb = $data['finalImageThumb'] ?? ($data['finalImage'] ?? ($data['finalImageFull'] ?? ''));
+  $href  = $data['finalImageURL']  ?? ($data['finalImageFull'] ?? $thumb);
+  if (empty($thumb)) return;
+
+  $html = pe_clickable_thumb_pair($thumb, $href, __('Customized Image', 'pe-textdomain'), 160);
 
   echo '<div style="margin:8px 0; padding:8px; border:1px solid #eee; background:#fafafa;">';
   echo '<strong>' . esc_html__('Customization', 'pe-textdomain') . '</strong><br>';
   echo $html;
   echo '<div style="font-size:12px; color:#333; margin-top:6px;">';
-  echo esc_html__('Rotation', 'pe-textdomain') . ': ' . esc_html($data['rotation']) . '°<br>';
-  echo esc_html__('Zoom', 'pe-textdomain') . ': ' . esc_html($data['zoom']) . 'x<br>';
-  echo esc_html__('Position', 'pe-textdomain') . ': (' . esc_html($data['positionX']) . ', ' . esc_html($data['positionY']) . ')<br>';
+  echo esc_html__('Rotation', 'pe-textdomain') . ': ' . esc_html($data['rotation'] ?? 0) . '°<br>';
+  echo esc_html__('Zoom', 'pe-textdomain') . ': ' . esc_html($data['zoom'] ?? 1) . 'x<br>';
+  echo esc_html__('Position', 'pe-textdomain') . ': (' . esc_html($data['positionX'] ?? 0) . ', ' . esc_html($data['positionY'] ?? 0) . ')<br>';
   echo '</div>';
   echo '</div>';
 }
@@ -244,12 +291,17 @@ function validate_before_add_to_cart($passed, $product_id, $quantity)
  * ========================================================================= */
 
 // Cart/Mini-cart/Checkout left thumbnail (clickable)
+// NOW: small src (thumb) but link/download points to hi-res
 function pe_cart_item_thumbnail($image, $cart_item, $cart_item_key)
 {
-  if (empty($cart_item['image_customization']['finalImage'])) return $image;
+  $data = $cart_item['image_customization'] ?? [];
+  if (empty($data)) return $image;
 
-  $src = $cart_item['image_customization']['finalImage'];
-  return pe_clickable_thumb_html($src, __('Customized Image Preview', 'pe-textdomain'), 80);
+  $thumb = $data['finalImageThumb'] ?? ($data['finalImage'] ?? '');
+  $href  = $data['finalImageURL']  ?? ($data['finalImageFull'] ?? $thumb);
+  if (empty($thumb)) return $image;
+
+  return pe_clickable_thumb_pair($thumb, $href, __('Customized Image Preview', 'pe-textdomain'), 80);
 }
 
 // Detect “upload required” messages (EN/IT + loose fallback)
@@ -311,32 +363,31 @@ function pe_strip_upload_required_checkout($data, $errors)
  * ========================================================================= */
 
 // Helper: best image for order item (prefer uploaded URL)
+// For backward compatibility this now returns the link target (hi-res when possible)
 function pe_get_order_item_custom_image_src($item)
 {
-  $json = $item->get_meta('_image_customization');
-  if (!$json) return '';
-  $data = json_decode($json, true);
-  if (!is_array($data)) return '';
-  if (!empty($data['finalImageURL'])) return $data['finalImageURL']; // uploaded file URL
-  if (!empty($data['finalImage']))    return $data['finalImage'];    // base64 data URL
-  return '';
+  return pe_get_custom_image_href($item);
 }
 
 // Preferred replacement (if theme calls this filter)
+// Use thumb for <img src>, but link to hi-res href
 function pe_order_item_thumbnail($image, $item)
 {
-  $src = pe_get_order_item_custom_image_src($item);
-  if (!$src) return $image;
-  return pe_clickable_thumb_html($src, __('Customized Image Preview', 'pe-textdomain'), 80);
+  $thumb = pe_get_custom_image_thumb_src($item);
+  $href  = pe_get_custom_image_href($item);
+  if (!$thumb || !$href) return $image;
+  return pe_clickable_thumb_pair($thumb, $href, __('Customized Image Preview', 'pe-textdomain'), 80);
 }
 
-// Fallback: print a hidden marker with the src for each order line
+// Fallback: print a hidden marker with the src (thumb) + href (hi-res) for each order line
 function pe_output_order_thumb_marker($item_id, $item, $order, $plain_text)
 {
-  $src = pe_get_order_item_custom_image_src($item);
-  if (!$src) return;
-  $safe_src = pe_safe_img_src($src);
-  echo '<span class="pe-order-thumb" data-src="' . esc_attr($safe_src) . '" style="display:none"></span>';
+  $thumb = pe_get_custom_image_thumb_src($item);
+  $href  = pe_get_custom_image_href($item);
+  if (!$thumb || !$href) return;
+  $safe_src  = pe_safe_img_src($thumb);
+  $safe_href = pe_safe_img_src($href);
+  echo '<span class="pe-order-thumb" data-src="' . esc_attr($safe_src) . '" data-href="' . esc_attr($safe_href) . '" style="display:none"></span>';
 }
 
 // JS fallback: swap/inject the left thumbnail and wrap with <a> (thank-you + view order)
@@ -364,6 +415,7 @@ function pe_replace_order_thumbs_js()
 
       markers.forEach(function(marker) {
         var src = marker.getAttribute('data-src');
+        var href = marker.getAttribute('data-href') || src;
         if (!src) return;
         var tr = marker.closest('tr');
         if (!tr) return;
@@ -374,7 +426,7 @@ function pe_replace_order_thumbs_js()
           tr.querySelector('img');
 
         if (img) {
-          // ensure the img uses our src
+          // ensure the img uses our src (thumb)
           img.removeAttribute('srcset');
           img.removeAttribute('sizes');
           img.src = src;
@@ -383,12 +435,12 @@ function pe_replace_order_thumbs_js()
           img.style.border = '1px solid #ddd';
           if (!img.className) img.className = 'attachment-woocommerce_thumbnail size-woocommerce_thumbnail';
 
-          // wrap in anchor if not already linked
+          // wrap in anchor if not already linked, and point to hi-res href
           var parent = img.parentNode;
           if (!parent || parent.tagName.toLowerCase() !== 'a') {
-            wrapWithLink(img, src);
+            wrapWithLink(img, href);
           } else {
-            parent.setAttribute('href', src);
+            parent.setAttribute('href', href);
             parent.setAttribute('target', '_blank');
             parent.setAttribute('rel', 'noopener noreferrer nofollow');
             parent.setAttribute('download', 'customized-image.png');
@@ -398,7 +450,7 @@ function pe_replace_order_thumbs_js()
           var cell = tr.querySelector('td.product-name, td.woocommerce-table__product-name');
           if (cell) {
             var a = document.createElement('a');
-            a.href = src;
+            a.href = href;
             a.target = '_blank';
             a.rel = 'noopener noreferrer nofollow';
             a.className = 'pe-thumb-link';
@@ -423,7 +475,7 @@ function pe_replace_order_thumbs_js()
 <?php
 }
 
-// Emails: use uploaded URL (skip base64 links for email clients)
+// Emails: use uploaded URL if available (no links; some clients strip anchors)
 function pe_email_order_item_thumbnail($image, $item, $email)
 {
   $json = $item->get_meta('_image_customization');

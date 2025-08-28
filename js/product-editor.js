@@ -1,6 +1,7 @@
 /**
  * Product Editor JavaScript
  * Handles image upload, manipulation, and preview for WooCommerce products
+ * UPDATED: adds hi-res (1600x1600) + thumb (320x320) exports via offscreen canvases
  */
 
 (function() {
@@ -121,7 +122,11 @@
       ZOOM_STEP: 0.2,
       ZOOM_MIN: 0.1,
       ZOOM_MAX: 5,
-      FIT_PADDING: 0.8
+      FIT_PADDING: 0.8,
+
+      // NEW: export sizes
+      EXPORT_FULL: 1600,   // hi-res edge (set to taste)
+      EXPORT_THUMB: 320    // small thumb edge for fast pages
     };
 
     // Localized strings (fallback)
@@ -255,6 +260,48 @@
       return Math.max(CONFIG.ZOOM_MIN, Math.min(CONFIG.ZOOM_MAX, value));
     }
 
+    // === NEW: build composite at arbitrary size (hi-res or thumb) ===
+    function exportComposite(targetW, targetH) {
+      const off = document.createElement('canvas');
+      off.width = targetW;
+      off.height = targetH;
+      const octx = off.getContext('2d');
+
+      if (state.img && state.imageLoaded) {
+        // map current transforms into new resolution
+        const scaleFactorX = targetW / elements.canvas.width;
+        const scaleFactorY = targetH / elements.canvas.height;
+
+        octx.save();
+        octx.translate(targetW / 2, targetH / 2);
+        octx.translate(state.posX * scaleFactorX, state.posY * scaleFactorY);
+        octx.rotate(degreesToRadians(state.rotation));
+        octx.scale(state.scale, state.scale);
+
+        octx.drawImage(
+          state.img,
+          -state.imgNaturalWidth / 2,
+          -state.imgNaturalHeight / 2,
+          state.imgNaturalWidth,
+          state.imgNaturalHeight
+        );
+
+        octx.restore();
+      }
+
+      // Border overlay scaled to target
+      if (borderImg && borderImg.complete && borderImg.naturalWidth) {
+        octx.drawImage(borderImg, 0, 0, targetW, targetH);
+      }
+
+      try {
+        return off.toDataURL('image/png');
+      } catch (e) {
+        console.warn('Photo Editor: Could not generate export data URL:', e);
+        return '';
+      }
+    }
+
     // Load image from file
     function loadImage(file) {
       if (!file) {
@@ -310,7 +357,7 @@
       ui.showStatus(STRINGS.imageCleared, 'success');
     }
 
-    // Save editor state
+    // === UPDATED: Save editor state with hi-res + thumb ===
     function saveData() {
       if (!state.imageLoaded || !state.img) {
         // nessuna immagine → svuota entrambi i campi
@@ -318,12 +365,9 @@
         return;
       }
 
-      let dataUrl = '';
-      try {
-        dataUrl = elements.canvas.toDataURL('image/png');
-      } catch (err) {
-        console.warn('Photo Editor: Could not generate canvas data URL:', err);
-      }
+      // Offscreen exports at configured sizes
+      const fullDataUrl = exportComposite(CONFIG.EXPORT_FULL, CONFIG.EXPORT_FULL);
+      const thumbDataUrl = exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB);
 
       const data = {
         rotation: state.rotation,
@@ -335,7 +379,14 @@
         imageWidth: state.imgNaturalWidth,
         imageHeight: state.imgNaturalHeight,
         hasImage: state.imageLoaded,
-        finalImage: dataUrl,
+
+        // NEW fields
+        finalImageFull: fullDataUrl,     // big 1600x1600
+        finalImageThumb: thumbDataUrl,   // small 320x320
+
+        // legacy field kept, points to thumb for fast page loads
+        finalImage: thumbDataUrl,
+
         timestamp: Date.now()
       };
 
@@ -471,7 +522,6 @@
     window.PE_buildAndWriteFromCanvas = function() {
       if (!state.imageLoaded) { writeCustomizationJSON(''); return; }
       try {
-        const dataUrl = elements.canvas.toDataURL('image/png');
         const payload = {
           rotation: state.rotation,
           zoom: state.scale,
@@ -482,7 +532,11 @@
           imageWidth: state.imgNaturalWidth,
           imageHeight: state.imgNaturalHeight,
           hasImage: state.imageLoaded,
-          finalImage: dataUrl,
+          // NEW: both sizes
+          finalImageFull: exportComposite(CONFIG.EXPORT_FULL, CONFIG.EXPORT_FULL),
+          finalImageThumb: exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB),
+          // legacy field remains, points to thumb for speed
+          finalImage: exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB),
           timestamp: Date.now()
         };
         writeCustomizationJSON(JSON.stringify(payload));
