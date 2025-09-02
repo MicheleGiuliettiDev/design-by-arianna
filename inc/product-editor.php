@@ -90,12 +90,6 @@ function render_editor()
 ?>
   <div id="pe-editor">
     <div id="pe-body">
-      <img id="pe-border-img"
-        src="<?php echo esc_url(get_stylesheet_directory_uri() . '/images/input-border-800.png'); ?>"
-        alt="Border Frame"
-        class="pe-border-frame"
-        onerror="this.style.display='none'; document.getElementById('pe-border-fallback').style.display='block';" />
-
       <canvas id="pe-canvas" width="<?php echo $canvas_size; ?>" height="<?php echo $canvas_size; ?>" class="pe-empty-canvas"
         aria-label="<?php echo esc_attr__('Image preview canvas', 'pe-textdomain'); ?>" role="img"></canvas>
 
@@ -515,7 +509,7 @@ function enqueue_editor_js()
   wp_enqueue_script($handle, $src, [], $ver, true);
 
   wp_localize_script($handle, 'peVars', [
-    'borderImageUrl' => get_stylesheet_directory_uri() . '/images/input-border.png',
+    'borderImageUrl' => get_stylesheet_directory_uri() . '/images/input-border-800.png',
     'ajaxUrl'        => admin_url('admin-ajax.php'),
     'nonce'          => wp_create_nonce('pe_nonce'),
     'strings'        => [
