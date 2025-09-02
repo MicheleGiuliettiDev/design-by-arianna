@@ -1,5 +1,5 @@
 /**
- * Product Editor JavaScript
+ * Product Editor JavaScript (progressive 1200px + AJAX upload + thumb)
  * Handles image upload, manipulation, and preview for WooCommerce products
  * UPDATED: adds hi-res (1600x1600) + thumb (320x320) exports via offscreen canvases
  */
@@ -27,41 +27,37 @@
       btnClear: document.getElementById('pe-clear'),
 
       // === Campi nascosti ===
-      // Fuori dal form (UI buffer, SENZA name)
-      hiddenDataUI: document.getElementById('pe-data-ui'),
-      // Dentro al form (verrà postato; name="image_customization")
-      hiddenDataForm: document.getElementById('pe-data'),
+      hiddenDataUI: document.getElementById('pe-data-ui'), // UI buffer (senza name)
+      hiddenDataForm: document.getElementById('pe-data'),   // dentro il form (name="image_customization")
 
       statusMessage: document.getElementById('pe-status-message')
     };
 
-    // Non bloccare l'init se manca il campo dentro il form:
-    // possiamo comunque far funzionare l'editor e sincronizzare più tardi.
     if (!elements.canvas || !elements.fileInput || !elements.loadButton) {
       console.error('Photo Editor: Required DOM elements not found');
       return;
     }
 
-    // Riferimento al form prodotto (per la sync prima del submit)
+    // Canvas fisso 1200x1200
+    if (elements.canvas.width !== 1200 || elements.canvas.height !== 1200) {
+      elements.canvas.width = 1200;
+      elements.canvas.height = 1200;
+    }
+
+    // Riferimento al form prodotto (per sync prima del submit)
     const productForm = document.querySelector('form.cart');
 
-    // Bridge di scrittura: aggiorna sempre entrambi i campi (UI + form)
+    // Bridge di scrittura: aggiorna sempre UI + form
     function writeCustomizationJSON(json) {
       if (elements.hiddenDataUI) elements.hiddenDataUI.value = json;
       if (elements.hiddenDataForm) elements.hiddenDataForm.value = json;
     }
 
-    // Aggancia la sync bidirezionale se i campi esistono
+    // Sync bidirezionale & safety prima del submit
     function wireHiddenSync() {
-      // Se il tema ha stampato il form dopo, riprova a cercare i campi
-      if (!elements.hiddenDataForm) {
-        elements.hiddenDataForm = document.getElementById('pe-data');
-      }
-      if (!elements.hiddenDataUI) {
-        elements.hiddenDataUI = document.getElementById('pe-data-ui');
-      }
+      if (!elements.hiddenDataForm) elements.hiddenDataForm = document.getElementById('pe-data');
+      if (!elements.hiddenDataUI)   elements.hiddenDataUI   = document.getElementById('pe-data-ui');
 
-      // Se qualcuno scrive direttamente su #pe-data (vecchio codice), riflettiamo su UI
       if (elements.hiddenDataForm) {
         elements.hiddenDataForm.addEventListener('input', function() {
           if (elements.hiddenDataUI && elements.hiddenDataUI.value !== elements.hiddenDataForm.value) {
@@ -69,7 +65,6 @@
           }
         });
       }
-      // Se qualcuno scrive su #pe-data-ui, riflettiamo su #pe-data
       if (elements.hiddenDataUI) {
         elements.hiddenDataUI.addEventListener('input', function() {
           if (elements.hiddenDataForm && elements.hiddenDataForm.value !== elements.hiddenDataUI.value) {
@@ -78,7 +73,6 @@
         });
       }
 
-      // Safety: prima del submit/click assicuriamo che il campo nel form abbia l'ultimo JSON
       if (productForm) {
         productForm.addEventListener('submit', function() {
           if (elements.hiddenDataUI && elements.hiddenDataForm) {
@@ -95,15 +89,14 @@
         }
       }
     }
-    // wire subito e anche al DOMContentLoaded (nel caso alcuni temi ritardino la stampa del form)
     wireHiddenSync();
     document.addEventListener('DOMContentLoaded', wireHiddenSync);
 
-    const ctx = elements.canvas.getContext('2d');
+    const ctx = elements.canvas.getContext('2d', { alpha: false });
 
-    // State for user image
+    // Stato
     const state = {
-      img: null,
+      img: null,                  // ImageBitmap | HTMLImageElement
       imgNaturalWidth: 0,
       imgNaturalHeight: 0,
       rotation: 0,
@@ -113,10 +106,19 @@
       isDragging: false,
       dragStartX: 0,
       dragStartY: 0,
-      imageLoaded: false
+      imageLoaded: false,
+      finalImageURL: ''           // popolato dopo upload AJAX
     };
 
-    // Config constants
+    // Flag per evitare upload ripetuti inutili
+    let uploadedOnce = false;
+
+    // Rendering progressivo
+    let useLowRes = false;        // true durante interazione
+    let redrawScheduled = false;  // evita ridisegni a raffica
+    let idleRenderTimer = null;   // HQ dopo breve pausa
+
+    // Config
     const CONFIG = {
       ROTATE_STEP: 90,
       ZOOM_STEP: 0.2,
@@ -137,28 +139,17 @@
       loadError: 'Error loading image. Please try another file.'
     };
 
-    // ✅ Preload static border image
+    // ✅ Preload cornice
     const borderImg = new Image();
     borderImg.src = (typeof peVars !== 'undefined' && peVars.borderImageUrl) ? peVars.borderImageUrl : '';
-    borderImg.onload = () => {
-      // console.log("Border image loaded:", borderImg.src);
-      draw();
-    };
+    borderImg.onload = () => { draw(true); };
 
     // UI helpers
     const ui = {
-      showBody() {
-        if (elements.bodyBox) elements.bodyBox.style.display = 'block';
-      },
-      hideBody() {
-        if (elements.bodyBox) elements.bodyBox.style.display = 'none';
-      },
-      showLoadButton() {
-        if (elements.loadButton) elements.loadButton.style.display = 'block';
-      },
-      hideLoadButton() {
-        if (elements.loadButton) elements.loadButton.style.display = 'none';
-      },
+      showBody() { if (elements.bodyBox) elements.bodyBox.style.display = 'block'; },
+      hideBody() { if (elements.bodyBox) elements.bodyBox.style.display = 'none'; },
+      showLoadButton() { if (elements.loadButton) elements.loadButton.style.display = 'block'; },
+      hideLoadButton() { if (elements.loadButton) elements.loadButton.style.display = 'none'; },
       updateControls() {
         const controls = [
           elements.btnRotateLeft,
@@ -168,71 +159,75 @@
           elements.btnReset,
           elements.btnClear
         ];
-        controls.forEach(btn => {
-          if (btn) btn.disabled = !state.imageLoaded;
-        });
-
-        if (state.imageLoaded) {
-          elements.canvas.classList.add('pe-canvas-draggable');
-        } else {
-          elements.canvas.classList.remove('pe-canvas-draggable');
-        }
+        controls.forEach(btn => { if (btn) btn.disabled = !state.imageLoaded; });
+        if (state.imageLoaded) elements.canvas.classList.add('pe-canvas-draggable');
+        else elements.canvas.classList.remove('pe-canvas-draggable');
       },
       showStatus(message, type = 'success') {
         if (!elements.statusMessage) return;
         elements.statusMessage.textContent = message;
         elements.statusMessage.className = `pe-status-message pe-status-${type}`;
         elements.statusMessage.style.display = 'block';
-        setTimeout(() => {
-          elements.statusMessage.style.display = 'none';
-        }, 3000);
+        setTimeout(() => { elements.statusMessage.style.display = 'none'; }, 3000);
       },
-      clearCanvas() {
-        ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height);
-      },
+      clearCanvas() { ctx.clearRect(0, 0, elements.canvas.width, elements.canvas.height); },
       drawEmptyCanvas() {
         elements.canvas.classList.add('pe-empty-canvas');
         this.clearCanvas();
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0,0,elements.canvas.width,elements.canvas.height);
       }
     };
 
-    // Degrees → radians
-    function degreesToRadians(deg) {
-      return deg * Math.PI / 180;
-    }
+    // Helpers
+    function degreesToRadians(deg) { return deg * Math.PI / 180; }
 
-    // === Canvas draw function ===
-    function draw() {
-      ui.clearCanvas();
+    // === Disegno dinamico (canvas 1200×1200) ===
+    function draw(highQuality = false) {
+      if (redrawScheduled && !highQuality) return;
+      redrawScheduled = true;
 
-      if (state.img && state.imageLoaded) {
-        elements.canvas.classList.remove('pe-empty-canvas');
+      requestAnimationFrame(() => {
+        redrawScheduled = false;
 
-        ctx.save();
-        const cx = elements.canvas.width / 2;
-        const cy = elements.canvas.height / 2;
-        ctx.translate(cx, cy);
-        ctx.translate(state.posX, state.posY);
-        ctx.rotate(degreesToRadians(state.rotation));
-        ctx.scale(state.scale, state.scale);
+        const prevSmooth = ctx.imageSmoothingEnabled;
+        const prevQual   = ctx.imageSmoothingQuality;
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = (useLowRes && !highQuality) ? 'low' : 'high';
 
-        ctx.drawImage(
-          state.img,
-          -state.imgNaturalWidth / 2,
-          -state.imgNaturalHeight / 2,
-          state.imgNaturalWidth,
-          state.imgNaturalHeight
-        );
+        // sfondo bianco per JPEG coerente
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, elements.canvas.width, elements.canvas.height);
 
-        ctx.restore();
-      } else {
-        ui.drawEmptyCanvas();
-      }
+        if (state.img && state.imageLoaded) {
+          elements.canvas.classList.remove('pe-empty-canvas');
 
-      // ✅ Always draw border image last (overlay)
-      if (borderImg && borderImg.complete && borderImg.naturalWidth) {
-        ctx.drawImage(borderImg, 0, 0, elements.canvas.width, elements.canvas.height);
-      }
+          ctx.save();
+          const cx = elements.canvas.width / 2;
+          const cy = elements.canvas.height / 2;
+          ctx.translate(cx, cy);
+          ctx.translate(state.posX, state.posY);
+          ctx.rotate(degreesToRadians(state.rotation));
+
+          // durante interazione ↓ qualità per frame rapidi
+          const qualityScale = (useLowRes && !highQuality) ? 0.5 : 1.0;
+          const dw = state.imgNaturalWidth  * state.scale * qualityScale;
+          const dh = state.imgNaturalHeight * state.scale * qualityScale;
+
+          ctx.drawImage(state.img, -dw/2, -dh/2, dw, dh);
+          ctx.restore();
+        } else {
+          ui.drawEmptyCanvas();
+        }
+
+        // overlay cornice
+        if (borderImg && borderImg.complete && borderImg.naturalWidth) {
+          ctx.drawImage(borderImg, 0, 0, elements.canvas.width, elements.canvas.height);
+        }
+
+        ctx.imageSmoothingEnabled = prevSmooth;
+        ctx.imageSmoothingQuality = prevQual;
+      });
     }
 
     // Fit image inside canvas
@@ -252,10 +247,9 @@
       state.posX = 0;
       state.posY = 0;
 
-      draw();
+      draw(true); // HQ iniziale
     }
 
-    // Clamp zoom scale
     function clampScale(value) {
       return Math.max(CONFIG.ZOOM_MIN, Math.min(CONFIG.ZOOM_MAX, value));
     }
@@ -304,22 +298,23 @@
 
     // Load image from file
     function loadImage(file) {
-      if (!file) {
-        clearImage();
-        return;
-      }
+      if (!file) { clearImage(); return; }
       if (!file.type || !file.type.startsWith('image/')) {
         ui.showStatus(STRINGS.invalidFile, 'error');
         return;
       }
 
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          state.img = img;
-          state.imgNaturalWidth = img.naturalWidth;
-          state.imgNaturalHeight = img.naturalHeight;
+      // reset URL precedente (nuova immagine)
+      uploadedOnce = false;
+      state.finalImageURL = '';
+
+      const blobURL = URL.createObjectURL(file);
+
+      if ('createImageBitmap' in window) {
+        createImageBitmap(file).then(bmp => {
+          state.img = bmp;
+          state.imgNaturalWidth = bmp.width;
+          state.imgNaturalHeight = bmp.height;
           state.imageLoaded = true;
 
           ui.showBody();
@@ -327,17 +322,35 @@
           ui.updateControls();
           fitImageToCanvas();
           ui.showStatus(STRINGS.imageLoaded, 'success');
-          saveData();
-        };
-        img.onerror = () => {
-          ui.showStatus(STRINGS.loadError, 'error');
-        };
-        img.src = e.target.result;
-      };
-      reader.readAsDataURL(file);
+          saveData(); // iniziale
+          URL.revokeObjectURL(blobURL);
+        }).catch(() => loadImageFallback(blobURL));
+      } else {
+        loadImageFallback(blobURL);
+      }
     }
 
-    // Clear image
+    function loadImageFallback(url) {
+      const img = new Image();
+      img.onload = () => {
+        state.img = img;
+        state.imgNaturalWidth = img.naturalWidth;
+        state.imgNaturalHeight = img.naturalHeight;
+        state.imageLoaded = true;
+
+        ui.showBody();
+        ui.hideLoadButton();
+        ui.updateControls();
+        fitImageToCanvas();
+        ui.showStatus(STRINGS.imageLoaded, 'success');
+        saveData();
+        URL.revokeObjectURL(url);
+      };
+      img.onerror = () => { ui.showStatus(STRINGS.loadError, 'error'); };
+      img.src = url;
+    }
+
+    // Pulisci
     function clearImage() {
       state.img = null;
       state.imageLoaded = false;
@@ -345,15 +358,15 @@
       state.scale = 1;
       state.posX = 0;
       state.posY = 0;
+      state.finalImageURL = '';
+      uploadedOnce = false;
 
-      draw();
+      draw(true);
       ui.showLoadButton();
       ui.updateControls();
 
       if (elements.fileInput) elements.fileInput.value = '';
-      // svuota entrambi i campi
       writeCustomizationJSON('');
-
       ui.showStatus(STRINGS.imageCleared, 'success');
     }
 
@@ -369,7 +382,10 @@
       const fullDataUrl = exportComposite(CONFIG.EXPORT_FULL, CONFIG.EXPORT_FULL);
       const thumbDataUrl = exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB);
 
-      const data = {
+      const finalDataUrl = exportFinalDataURLHQ();
+      const thumb = makeThumbDataURL();
+
+      const payload = {
         rotation: state.rotation,
         zoom: state.scale,
         positionX: state.posX,
@@ -379,7 +395,7 @@
         imageWidth: state.imgNaturalWidth,
         imageHeight: state.imgNaturalHeight,
         hasImage: state.imageLoaded,
-
+        
         // NEW fields
         finalImageFull: fullDataUrl,     // big 1600x1600
         finalImageThumb: thumbDataUrl,   // small 320x320
@@ -390,52 +406,89 @@
         timestamp: Date.now()
       };
 
-      // Scrivi JSON in entrambi i campi (UI + form)
-      writeCustomizationJSON(JSON.stringify(data));
+      // carica in Media Library per ottenere URL (solo 1 volta per immagine)
+      if (!uploadedOnce && window.peVars?.ajaxUrl && window.peVars?.nonce && finalDataUrl) {
+        try {
+          const body = new FormData();
+          body.append('action', 'pe_upload_image');
+          body.append('nonce', peVars.nonce);
+          body.append('dataUrl', finalDataUrl);
+          const res = await fetch(peVars.ajaxUrl, { method: 'POST', body });
+          const j = await res.json();
+          if (j && j.success && j.data && j.data.url) {
+            state.finalImageURL = j.data.url;
+            payload.finalImageURL = j.data.url;
+            uploadedOnce = true;
+          }
+        } catch (e) {
+          // se fallisce, resta base64 + thumb
+        }
+      }
+
+      writeCustomizationJSON(JSON.stringify(payload));
+    }
+
+    // === Interazione progressiva ===
+    function startInteraction() {
+      useLowRes = true;
+      if (idleRenderTimer) clearTimeout(idleRenderTimer);
+    }
+    function endInteraction() {
+      idleRenderTimer = setTimeout(() => {
+        useLowRes = false;
+        draw(true);   // refresh HQ
+        saveData();   // salva quando l’utente si ferma
+      }, 120);
     }
 
     // === Controls ===
     function rotateLeft() {
       if (!state.imageLoaded) return;
+      startInteraction();
       state.rotation -= CONFIG.ROTATE_STEP;
       draw();
-      saveData();
+      endInteraction();
     }
     function rotateRight() {
       if (!state.imageLoaded) return;
+      startInteraction();
       state.rotation += CONFIG.ROTATE_STEP;
       draw();
-      saveData();
+      endInteraction();
     }
     function zoomIn() {
       if (!state.imageLoaded) return;
+      startInteraction();
       state.scale = clampScale(state.scale * (1 + CONFIG.ZOOM_STEP));
       draw();
-      saveData();
+      endInteraction();
     }
     function zoomOut() {
       if (!state.imageLoaded) return;
+      startInteraction();
       state.scale = clampScale(state.scale * (1 - CONFIG.ZOOM_STEP));
       draw();
-      saveData();
+      endInteraction();
     }
     function resetView() {
       if (!state.imageLoaded) return;
+      startInteraction();
       state.rotation = 0;
       state.scale = 1;
       state.posX = 0;
       state.posY = 0;
       draw();
-      saveData();
+      endInteraction();
     }
 
-    // === Dragging ===
+    // === Dragging (mouse) ===
     function onMouseDown(e) {
       if (!state.imageLoaded) return;
       state.isDragging = true;
       state.dragStartX = e.clientX;
       state.dragStartY = e.clientY;
       elements.canvas.classList.add('pe-canvas-dragging');
+      startInteraction();
       e.preventDefault();
     }
     function onMouseMove(e) {
@@ -446,26 +499,27 @@
       state.dragStartY = e.clientY;
       state.posX += dx;
       state.posY += dy;
-      draw();
+      draw(); // low-res frame
     }
     function onMouseUp() {
       if (!state.isDragging) return;
       state.isDragging = false;
       elements.canvas.classList.remove('pe-canvas-dragging');
-      saveData();
+      endInteraction(); // HQ + save
     }
 
     // === Mouse wheel zoom ===
     function onWheel(e) {
       if (!state.imageLoaded) return;
       e.preventDefault();
+      startInteraction();
       const delta = Math.sign(e.deltaY) > 0 ? -CONFIG.ZOOM_STEP : CONFIG.ZOOM_STEP;
       state.scale = clampScale(state.scale * (1 + delta));
-      draw();
-      saveData();
+      draw();       // low-res
+      endInteraction(); // HQ + save
     }
 
-    // === Touch drag support ===
+    // === Touch drag (one-finger) ===
     function onTouchStart(e) {
       if (!state.imageLoaded) return;
       e.preventDefault();
@@ -514,7 +568,7 @@
     ui.showLoadButton();
     ui.updateControls();
 
-    // API opzionale, nel caso tu voglia richiamarla da altri script
+    // API opzionale
     window.PE_writeCustomization = function(payload) {
       const json = (typeof payload === 'string') ? payload : JSON.stringify(payload || {});
       writeCustomizationJSON(json);
@@ -522,6 +576,7 @@
     window.PE_buildAndWriteFromCanvas = function() {
       if (!state.imageLoaded) { writeCustomizationJSON(''); return; }
       try {
+
         const payload = {
           rotation: state.rotation,
           zoom: state.scale,
@@ -537,14 +592,12 @@
           finalImageThumb: exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB),
           // legacy field remains, points to thumb for speed
           finalImage: exportComposite(CONFIG.EXPORT_THUMB, CONFIG.EXPORT_THUMB),
+
           timestamp: Date.now()
         };
         writeCustomizationJSON(JSON.stringify(payload));
-      } catch (e) {
-        // ignore
-      }
+      } catch (e) { /* ignore */ }
     };
   }
 
 })();
-
