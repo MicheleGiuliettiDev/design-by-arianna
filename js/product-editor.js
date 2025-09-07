@@ -197,6 +197,8 @@
       statusMessage: document.getElementById('pe-status-message')
     };
 
+    elements.canvas.style.touchAction = 'none';
+
     if (!elements.canvas || !elements.fileInput || !elements.loadButton) {
       console.error('Photo Editor: Required DOM elements not found');
       return;
@@ -532,23 +534,138 @@
       saveData();
     }
 
-    // Touch → mouse bridge
-    function onTouchStart(e) {
+    // =========================
+    // Pointer Events (unified mouse/touch/pen)
+    // =========================
+    const activePointers = new Map();
+    let gesture = {
+      mode: 'none',          // 'none' | 'pan' | 'pinch'
+      lastX: 0,
+      lastY: 0,
+      // For pinch:
+      startScale: 1,
+      prevScale: 1,
+      startPosX: 0,
+      startPosY: 0,
+      startDist: 0,
+      centerX: 0,
+      centerY: 0
+    };
+
+    function getPointerCenterAndDist() {
+      const pts = Array.from(activePointers.values());
+      if (pts.length < 2) return { cx: 0, cy: 0, dist: 0 };
+      const p0 = pts[0], p1 = pts[1];
+      const cx = (p0.clientX + p1.clientX) / 2;
+      const cy = (p0.clientY + p1.clientY) / 2;
+      const dx = p1.clientX - p0.clientX;
+      const dy = p1.clientY - p0.clientY;
+      const dist = Math.hypot(dx, dy);
+      return { cx, cy, dist };
+    }
+
+    function toCanvasCoords(clientX, clientY) {
+      // Convert client coords to canvas CSS space (origin at canvas top-left)
+      const rect = elements.canvas.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      return { x, y, rect };
+    }
+
+    function onPointerDown(e) {
       if (!state.imageLoaded) return;
+      elements.canvas.setPointerCapture?.(e.pointerId);
+      activePointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+
+      if (activePointers.size === 1) {
+        // start pan
+        gesture.mode = 'pan';
+        gesture.lastX = e.clientX;
+        gesture.lastY = e.clientY;
+        elements.canvas.classList.add('pe-canvas-dragging');
+      } else if (activePointers.size === 2) {
+        // start pinch
+        const { cx, cy, dist } = getPointerCenterAndDist();
+        const { x, y, rect } = toCanvasCoords(cx, cy);
+        gesture.mode = 'pinch';
+        gesture.startScale = state.scale;
+        gesture.prevScale = state.scale;
+        gesture.startPosX = state.posX;
+        gesture.startPosY = state.posY;
+        gesture.startDist = Math.max(1, dist);
+        // Center relative to canvas center in CSS px (your transforms use canvas center)
+        gesture.centerX = x - rect.width / 2;
+        gesture.centerY = y - rect.height / 2;
+      }
+
       e.preventDefault();
-      const t = e.touches[0];
-      elements.canvas.dispatchEvent(new MouseEvent('mousedown', { clientX: t.clientX, clientY: t.clientY }));
     }
-    function onTouchMove(e) {
+
+    function onPointerMove(e) {
       if (!state.imageLoaded) return;
+      if (!activePointers.has(e.pointerId)) return;
+
+      // Update tracked pointer position
+      activePointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+
+      if (gesture.mode === 'pan' && activePointers.size === 1) {
+        const dx = e.clientX - gesture.lastX;
+        const dy = e.clientY - gesture.lastY;
+        gesture.lastX = e.clientX;
+        gesture.lastY = e.clientY;
+
+        state.posX += dx; // CSS px
+        state.posY += dy; // CSS px
+        draw(); // fast preview; save on end
+      } else if (gesture.mode === 'pinch' && activePointers.size >= 2) {
+        const { cx, cy, dist } = getPointerCenterAndDist();
+        const newScaleRaw = gesture.startScale * (dist / Math.max(1, gesture.startDist));
+        const newScale = clampScale(newScaleRaw);
+
+        // Zoom around the gesture center to keep it visually stable:
+        // Apply incremental scale factor relative to previous frame.
+        const factor = newScale / gesture.prevScale;
+        state.posX = gesture.centerX - (gesture.centerX - state.posX) * factor;
+        state.posY = gesture.centerY - (gesture.centerY - state.posY) * factor;
+
+        state.scale = newScale;
+        gesture.prevScale = newScale;
+
+        draw(); // fast preview; save on end
+      }
+
       e.preventDefault();
-      const t = e.touches[0];
-      elements.canvas.dispatchEvent(new MouseEvent('mousemove', { clientX: t.clientX, clientY: t.clientY }));
     }
-    function onTouchEnd(e) {
+
+    function endPointer(e) {
+      if (activePointers.has(e.pointerId)) {
+        activePointers.delete(e.pointerId);
+      }
+
+      if (activePointers.size === 0) {
+        // gesture ends
+        elements.canvas.classList.remove('pe-canvas-dragging');
+        if (gesture.mode !== 'none') {
+          gesture.mode = 'none';
+          saveData(); // commit the final frame + exports
+        }
+      } else if (activePointers.size === 1 && gesture.mode === 'pinch') {
+        // fallback to pan if one finger remains
+        const remaining = Array.from(activePointers.values())[0];
+        gesture.mode = 'pan';
+        gesture.lastX = remaining.clientX;
+        gesture.lastY = remaining.clientY;
+      }
+
       e.preventDefault();
-      elements.canvas.dispatchEvent(new MouseEvent('mouseup', {}));
     }
+
+    // Bind pointer events
+    elements.canvas.addEventListener('pointerdown', onPointerDown, { passive: false });
+    elements.canvas.addEventListener('pointermove', onPointerMove, { passive: false });
+    elements.canvas.addEventListener('pointerup', endPointer, { passive: false });
+    elements.canvas.addEventListener('pointercancel', endPointer, { passive: false });
+    elements.canvas.addEventListener('pointerleave', endPointer, { passive: false });
 
     // =========================
     // Bind events
@@ -567,10 +684,6 @@
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
     elements.canvas.addEventListener('wheel', onWheel, { passive: false });
-
-    elements.canvas.addEventListener('touchstart', onTouchStart, { passive: false });
-    elements.canvas.addEventListener('touchmove', onTouchMove, { passive: false });
-    elements.canvas.addEventListener('touchend', onTouchEnd);
 
     elements.canvas.addEventListener('mouseleave', onMouseUp);
 
